@@ -1,33 +1,42 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import requests
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-AZURE_DEVOPS_RESOURCE_SCOPE = (
-    "499b84ac-1321-427f-aa17-267ca6975798/.default"
-)
+AZURE_DEVOPS_RESOURCE_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
+
+DEFAULT_FIELDS = [
+    "System.Id",
+    "System.WorkItemType",
+    "System.Title",
+    "System.State",
+    "System.AssignedTo",
+    "System.IterationPath",
+    "System.AreaPath",
+    "System.Tags",
+    "System.Description",
+    "System.CreatedDate",
+    "System.ChangedDate",
+    "System.CreatedBy",
+]
 
 
 class AzureDevOpsClient:
-    def __init__(
-        self,
-        organization: str,
-        project: str,
-    ):
+    def __init__(self, organization: str, project: str):
         self.organization = organization
         self.project = project
         self.credential = AzureCliCredential()
-        self.base_url = (
-            f"https://dev.azure.com/{self.organization}/{self.project}"
-        )
+        self.base_url = f"https://dev.azure.com/{self.organization}/{self.project}"
+        self.org_url = f"https://dev.azure.com/{self.organization}"
 
     def _access_token(self) -> str:
-        token = self.credential.get_token(AZURE_DEVOPS_RESOURCE_SCOPE)
-        return token.token
+        return self.credential.get_token(AZURE_DEVOPS_RESOURCE_SCOPE).token
 
     def _headers(self, content_type: str = "application/json") -> dict[str, str]:
         return {
@@ -37,115 +46,178 @@ class AzureDevOpsClient:
         }
 
     # -------------------------------------------------------------------------
-    # Work Items — Read
+    # Work Items — List / Read
     # -------------------------------------------------------------------------
 
     def get_work_item(self, work_item_id: int) -> dict[str, Any]:
-        """Fetch a single work item by ID, including its relations."""
+        """Fetch a single work item by ID, including relations."""
         url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}"
-        response = requests.get(
+        r = requests.get(
             url,
             headers=self._headers(),
             params={"api-version": "7.1", "$expand": "relations"},
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()
+        r.raise_for_status()
+        return r.json()
 
-    def get_work_items(self, ids: list[int], fields: list[str] | None = None) -> list[dict[str, Any]]:
+    def get_work_items(
+        self, ids: list[int], fields: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch multiple work items by ID in a single request."""
         if not ids:
             return []
-        default_fields = [
-            "System.Id",
-            "System.WorkItemType",
-            "System.Title",
-            "System.State",
-            "System.AssignedTo",
-            "System.IterationPath",
-            "System.AreaPath",
-            "System.Tags",
-            "System.Description",
-            "System.CreatedDate",
-            "System.ChangedDate",
-        ]
         url = f"{self.base_url}/_apis/wit/workitems"
-        response = requests.get(
+        r = requests.get(
             url,
             headers=self._headers(),
             params={
                 "api-version": "7.1",
                 "ids": ",".join(str(i) for i in ids),
-                "fields": ",".join(fields or default_fields),
+                "fields": ",".join(fields or DEFAULT_FIELDS),
             },
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()["value"]
+        r.raise_for_status()
+        return r.json()["value"]
 
     def query_work_items(self, wiql: str, top: int = 100) -> list[dict[str, Any]]:
         """Execute a WIQL query and return work items with fields populated."""
-        query_url = f"{self.base_url}/_apis/wit/wiql"
-        response = requests.post(
-            query_url,
+        r = requests.post(
+            f"{self.base_url}/_apis/wit/wiql",
             headers=self._headers(),
             params={"api-version": "7.1", "$top": top},
             json={"query": wiql},
             timeout=30,
         )
-        response.raise_for_status()
-        results = response.json()
-        ids = [item["id"] for item in results.get("workItems", [])]
+        r.raise_for_status()
+        ids = [item["id"] for item in r.json().get("workItems", [])]
         return self.get_work_items(ids)
+
+    def list_work_items(
+        self,
+        work_item_type: str | None = None,
+        state: str | None = None,
+        assigned_to: str | None = None,
+        tags: list[str] | None = None,
+        area_path: str | None = None,
+        iteration_path: str | None = None,
+        top: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List work items with optional filters. All filters are ANDed together."""
+        conditions = ["[System.TeamProject] = @project"]
+        if work_item_type:
+            conditions.append(f"[System.WorkItemType] = '{work_item_type}'")
+        if state:
+            conditions.append(f"[System.State] = '{state}'")
+        if assigned_to:
+            value = "@Me" if assigned_to.lower() in ("@me", "me") else f"'{assigned_to}'"
+            conditions.append(f"[System.AssignedTo] = {value}")
+        if tags:
+            for tag in tags:
+                conditions.append(f"[System.Tags] CONTAINS '{tag}'")
+        if area_path:
+            conditions.append(f"[System.AreaPath] UNDER '{area_path}'")
+        if iteration_path:
+            conditions.append(f"[System.IterationPath] UNDER '{iteration_path}'")
+        wiql = (
+            "SELECT [System.Id] FROM WorkItems WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY [System.ChangedDate] DESC"
+        )
+        return self.query_work_items(wiql, top=top)
 
     def my_open_items(self, top: int = 50) -> list[dict[str, Any]]:
         """Return all open work items assigned to the authenticated user."""
-        return self.query_work_items(
-            """
-            SELECT [System.Id]
-            FROM WorkItems
-            WHERE
-                [System.TeamProject] = @project
-                AND [System.AssignedTo] = @Me
-                AND [System.State] <> 'Closed'
-            ORDER BY [System.ChangedDate] DESC
-            """,
-            top=top,
-        )
+        return self.list_work_items(assigned_to="@me", top=top)
+
+    def list_by_sprint(
+        self, iteration_path: str | None = None, top: int = 50
+    ) -> list[dict[str, Any]]:
+        """List work items in a sprint. Uses current sprint if iteration_path is omitted."""
+        if iteration_path:
+            return self.list_work_items(iteration_path=iteration_path, top=top)
+        sprint = self.get_current_iteration()
+        if not sprint:
+            return []
+        return self.list_work_items(iteration_path=sprint["path"], top=top)
 
     # -------------------------------------------------------------------------
-    # Work Items — Write
+    # Work Items — Create
+    # -------------------------------------------------------------------------
+
+    def create_work_item(
+        self,
+        work_item_type: str,
+        title: str,
+        description: str | None = None,
+        assigned_to: str | None = None,
+        tags: list[str] | None = None,
+        area_path: str | None = None,
+        iteration_path: str | None = None,
+        extra_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new work item (Task, Bug, User Story, Feature, Epic, etc.)."""
+        url = f"{self.base_url}/_apis/wit/workitems/${work_item_type}"
+        ops: list[dict[str, Any]] = [
+            {"op": "add", "path": "/fields/System.Title", "value": title}
+        ]
+        if description:
+            ops.append({"op": "add", "path": "/fields/System.Description", "value": description})
+        if assigned_to:
+            ops.append({"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to})
+        if tags:
+            ops.append({"op": "add", "path": "/fields/System.Tags", "value": "; ".join(tags)})
+        if area_path:
+            ops.append({"op": "add", "path": "/fields/System.AreaPath", "value": area_path})
+        if iteration_path:
+            ops.append({"op": "add", "path": "/fields/System.IterationPath", "value": iteration_path})
+        for field, value in (extra_fields or {}).items():
+            ops.append({"op": "add", "path": f"/fields/{field}", "value": value})
+        r = requests.post(
+            url,
+            headers=self._headers("application/json-patch+json"),
+            params={"api-version": "7.1"},
+            json=ops,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    # -------------------------------------------------------------------------
+    # Work Items — Update
     # -------------------------------------------------------------------------
 
     def update_work_item(
-        self,
-        work_item_id: int,
-        operations: list[dict[str, Any]],
+        self, work_item_id: int, operations: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Apply a JSON Patch document to a work item."""
         url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}"
-        response = requests.patch(
+        r = requests.patch(
             url,
             headers=self._headers("application/json-patch+json"),
             params={"api-version": "7.1"},
             json=operations,
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()
+        r.raise_for_status()
+        return r.json()
 
     def set_field(self, work_item_id: int, field: str, value: Any) -> dict[str, Any]:
-        """Set a single field on a work item."""
         return self.update_work_item(
             work_item_id,
             [{"op": "add", "path": f"/fields/{field}", "value": value}],
         )
 
-    def set_state(self, work_item_id: int, state: str) -> dict[str, Any]:
-        return self.set_field(work_item_id, "System.State", state)
-
     def set_title(self, work_item_id: int, title: str) -> dict[str, Any]:
         return self.set_field(work_item_id, "System.Title", title)
+
+    def set_description(self, work_item_id: int, description: str) -> dict[str, Any]:
+        """Set (or replace) the description of a work item. Accepts plain text or HTML."""
+        return self.set_field(work_item_id, "System.Description", description)
+
+    def set_state(self, work_item_id: int, state: str) -> dict[str, Any]:
+        return self.set_field(work_item_id, "System.State", state)
 
     def assign_to(self, work_item_id: int, email: str) -> dict[str, Any]:
         return self.set_field(work_item_id, "System.AssignedTo", email)
@@ -153,89 +225,174 @@ class AzureDevOpsClient:
     def set_tags(self, work_item_id: int, tags: list[str]) -> dict[str, Any]:
         return self.set_field(work_item_id, "System.Tags", "; ".join(tags))
 
-    def create_work_item(
-        self,
-        work_item_type: str,
-        title: str,
-        extra_fields: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Create a new work item of the given type (e.g. 'Task', 'Bug', 'User Story')."""
-        url = (
-            f"https://dev.azure.com/{self.organization}/{self.project}"
-            f"/_apis/wit/workitems/${work_item_type}"
+    def set_area(self, work_item_id: int, area_path: str) -> dict[str, Any]:
+        return self.set_field(work_item_id, "System.AreaPath", area_path)
+
+    def set_iteration(self, work_item_id: int, iteration_path: str) -> dict[str, Any]:
+        return self.set_field(work_item_id, "System.IterationPath", iteration_path)
+
+    # -------------------------------------------------------------------------
+    # Work Items — Delete
+    # -------------------------------------------------------------------------
+
+    def delete_work_item(self, work_item_id: int, destroy: bool = False) -> None:
+        """
+        Delete a work item. By default it is soft-deleted (moves to recycle bin).
+        Pass destroy=True for permanent deletion (irreversible).
+        """
+        url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}"
+        r = requests.delete(
+            url,
+            headers=self._headers(),
+            params={"api-version": "7.1", "destroy": str(destroy).lower()},
+            timeout=30,
         )
-        ops: list[dict[str, Any]] = [
-            {"op": "add", "path": "/fields/System.Title", "value": title}
-        ]
-        for field, value in (extra_fields or {}).items():
-            ops.append({"op": "add", "path": f"/fields/{field}", "value": value})
-        response = requests.post(
+        r.raise_for_status()
+
+    def restore_work_item(self, work_item_id: int) -> dict[str, Any]:
+        """Restore a soft-deleted work item from the recycle bin."""
+        url = f"{self.base_url}/_apis/wit/recyclebin/{work_item_id}"
+        r = requests.patch(
             url,
             headers=self._headers("application/json-patch+json"),
             params={"api-version": "7.1"},
-            json=ops,
+            json=[{"op": "replace", "path": "/isDeleted", "value": "false"}],
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()
+        r.raise_for_status()
+        return r.json()
 
     # -------------------------------------------------------------------------
-    # Comments
+    # Comments — CRUD
     # -------------------------------------------------------------------------
-
-    def add_comment(self, work_item_id: int, comment: str) -> dict[str, Any]:
-        """Add a comment to a work item."""
-        url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}/comments"
-        response = requests.post(
-            url,
-            headers=self._headers(),
-            params={"api-version": "7.1-preview.4"},
-            json={"text": comment},
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json()
 
     def get_comments(self, work_item_id: int) -> list[dict[str, Any]]:
-        """Return all comments on a work item."""
+        """Return all comments on a work item, newest first."""
         url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}/comments"
-        response = requests.get(
+        r = requests.get(
+            url,
+            headers=self._headers(),
+            params={"api-version": "7.1-preview.4", "$orderBy": "createdDate desc"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json().get("comments", [])
+
+    def add_comment(self, work_item_id: int, text: str) -> dict[str, Any]:
+        """Add a comment to a work item."""
+        url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}/comments"
+        r = requests.post(
+            url,
+            headers=self._headers(),
+            params={"api-version": "7.1-preview.4"},
+            json={"text": text},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def update_comment(
+        self, work_item_id: int, comment_id: int, text: str
+    ) -> dict[str, Any]:
+        """Edit an existing comment."""
+        url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}/comments/{comment_id}"
+        r = requests.patch(
+            url,
+            headers=self._headers(),
+            params={"api-version": "7.1-preview.4"},
+            json={"text": text},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def delete_comment(self, work_item_id: int, comment_id: int) -> None:
+        """Delete a comment from a work item."""
+        url = f"{self.base_url}/_apis/wit/workitems/{work_item_id}/comments/{comment_id}"
+        r = requests.delete(
             url,
             headers=self._headers(),
             params={"api-version": "7.1-preview.4"},
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json().get("comments", [])
+        r.raise_for_status()
 
     # -------------------------------------------------------------------------
     # Iterations / Sprints
     # -------------------------------------------------------------------------
 
     def get_iterations(self) -> list[dict[str, Any]]:
-        """Return all iterations (sprints) for the project."""
+        """Return all iterations (sprints) for the project's default team."""
         url = f"{self.base_url}/_apis/work/teamsettings/iterations"
-        response = requests.get(
+        r = requests.get(
             url,
             headers=self._headers(),
             params={"api-version": "7.1"},
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json().get("value", [])
+        r.raise_for_status()
+        return r.json().get("value", [])
 
     def get_current_iteration(self) -> dict[str, Any] | None:
         """Return the current (active) iteration, or None if not found."""
         url = f"{self.base_url}/_apis/work/teamsettings/iterations"
-        response = requests.get(
+        r = requests.get(
             url,
             headers=self._headers(),
             params={"api-version": "7.1", "$timeframe": "current"},
             timeout=30,
         )
-        response.raise_for_status()
-        values = response.json().get("value", [])
+        r.raise_for_status()
+        values = r.json().get("value", [])
         return values[0] if values else None
+
+    # -------------------------------------------------------------------------
+    # Wiki
+    # -------------------------------------------------------------------------
+
+    def list_wikis(self) -> list[dict[str, Any]]:
+        """Return all wikis in the project."""
+        r = requests.get(
+            f"{self.base_url}/_apis/wiki/wikis",
+            headers=self._headers(),
+            params={"api-version": "7.1"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json().get("value", [])
+
+    def list_wiki_pages(
+        self, wiki_id: str, path: str = "/", depth: int = 2
+    ) -> dict[str, Any]:
+        """Return the page tree for a wiki starting at path."""
+        r = requests.get(
+            f"{self.base_url}/_apis/wiki/wikis/{wiki_id}/pages",
+            headers=self._headers(),
+            params={
+                "api-version": "7.1",
+                "path": path,
+                "recursionLevel": str(depth),
+                "includeContent": "false",
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def get_wiki_page(self, wiki_id: str, path: str) -> dict[str, Any]:
+        """Fetch a wiki page and return its markdown content."""
+        r = requests.get(
+            f"{self.base_url}/_apis/wiki/wikis/{wiki_id}/pages",
+            headers=self._headers(),
+            params={
+                "api-version": "7.1",
+                "path": path,
+                "includeContent": "true",
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
 
     # -------------------------------------------------------------------------
     # Projects
@@ -243,117 +400,12 @@ class AzureDevOpsClient:
 
     def list_projects(self) -> list[dict[str, Any]]:
         """Return all projects in the organization."""
-        url = f"https://dev.azure.com/{self.organization}/_apis/projects"
-        response = requests.get(
-            url,
+        r = requests.get(
+            f"{self.org_url}/_apis/projects",
             headers=self._headers(),
             params={"api-version": "7.1"},
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json().get("value", [])
+        r.raise_for_status()
+        return r.json().get("value", [])
 
-
-# -----------------------------------------------------------------------------
-# CLI smoke-test / example usage
-# -----------------------------------------------------------------------------
-
-def _print_item(item: dict[str, Any]) -> None:
-    f = item.get("fields", {})
-    print(
-        f"  [{item['id']}]"
-        f"  {f.get('System.WorkItemType', '?'):12}"
-        f"  {f.get('System.State', '?'):15}"
-        f"  {f.get('System.Title', '')}"
-    )
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Azure DevOps CLI helper")
-    parser.add_argument("--org", default=os.environ.get("AZDO_ORG"), required=not os.environ.get("AZDO_ORG"))
-    parser.add_argument("--project", default=os.environ.get("AZDO_PROJECT"), required=not os.environ.get("AZDO_PROJECT"))
-    sub = parser.add_subparsers(dest="command")
-
-    sub.add_parser("projects", help="List all projects in the organization")
-    sub.add_parser("mine", help="List your open work items")
-
-    p_get = sub.add_parser("get", help="Get a work item by ID")
-    p_get.add_argument("id", type=int)
-
-    p_state = sub.add_parser("state", help="Set work item state")
-    p_state.add_argument("id", type=int)
-    p_state.add_argument("state", help="e.g. Active, Closed, Resolved")
-
-    p_comment = sub.add_parser("comment", help="Add a comment to a work item")
-    p_comment.add_argument("id", type=int)
-    p_comment.add_argument("text")
-
-    p_create = sub.add_parser("create", help="Create a new work item")
-    p_create.add_argument("type", help="Work item type, e.g. Task, Bug")
-    p_create.add_argument("title")
-
-    p_query = sub.add_parser("query", help="Run a WIQL query")
-    p_query.add_argument("wiql", help="WIQL query string")
-    p_query.add_argument("--top", type=int, default=50)
-
-    sub.add_parser("sprint", help="Show current iteration / sprint")
-
-    args = parser.parse_args()
-
-    ado = AzureDevOpsClient(organization=args.org, project=args.project)
-
-    match args.command:
-        case "projects":
-            for p in ado.list_projects():
-                print(f"  {p['name']}")
-
-        case "mine":
-            items = ado.my_open_items()
-            print(f"{len(items)} open item(s) assigned to you:\n")
-            for item in items:
-                _print_item(item)
-
-        case "get":
-            item = ado.get_work_item(args.id)
-            f = item["fields"]
-            print(f"ID:          {item['id']}")
-            print(f"Type:        {f.get('System.WorkItemType')}")
-            print(f"Title:       {f.get('System.Title')}")
-            print(f"State:       {f.get('System.State')}")
-            print(f"Assigned To: {f.get('System.AssignedTo', {}).get('displayName', 'Unassigned')}")
-            print(f"Tags:        {f.get('System.Tags', '')}")
-            print(f"Iteration:   {f.get('System.IterationPath')}")
-
-        case "state":
-            ado.set_state(args.id, args.state)
-            print(f"Work item {args.id} state set to '{args.state}'.")
-
-        case "comment":
-            ado.add_comment(args.id, args.text)
-            print(f"Comment added to work item {args.id}.")
-
-        case "create":
-            item = ado.create_work_item(args.type, args.title)
-            print(f"Created {args.type} #{item['id']}: {args.title}")
-
-        case "query":
-            items = ado.query_work_items(args.wiql, top=args.top)
-            print(f"{len(items)} result(s):\n")
-            for item in items:
-                _print_item(item)
-
-        case "sprint":
-            iteration = ado.get_current_iteration()
-            if iteration:
-                attrs = iteration.get("attributes", {})
-                print(f"Name:  {iteration['name']}")
-                print(f"Path:  {iteration['path']}")
-                print(f"Start: {attrs.get('startDate', 'N/A')}")
-                print(f"End:   {attrs.get('finishDate', 'N/A')}")
-            else:
-                print("No current iteration found.")
-
-        case _:
-            parser.print_help()
