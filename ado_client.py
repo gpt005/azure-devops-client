@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import markdown
 import requests
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -285,7 +286,7 @@ class AzureDevOpsClient:
             url,
             headers=self._headers(),
             params={"api-version": "7.1-preview.4"},
-            json={"text": text},
+            json={"text": markdown.markdown(text)},
             timeout=30,
         )
         r.raise_for_status()
@@ -300,7 +301,7 @@ class AzureDevOpsClient:
             url,
             headers=self._headers(),
             params={"api-version": "7.1-preview.4"},
-            json={"text": text},
+            json={"text": markdown.markdown(text)},
             timeout=30,
         )
         r.raise_for_status()
@@ -393,6 +394,47 @@ class AzureDevOpsClient:
         )
         r.raise_for_status()
         return r.json()
+
+    def upsert_wiki_page(self, wiki_id: str, path: str, content: str) -> dict[str, Any]:
+        """Create or update a wiki page. Returns the API response."""
+        # A PUT with no If-Match header creates the page if absent, or fails on conflict.
+        # We do a GET first to obtain the ETag so updates work correctly.
+        etag = None
+        try:
+            existing = requests.get(
+                f"{self.base_url}/_apis/wiki/wikis/{wiki_id}/pages",
+                headers=self._headers(),
+                params={"api-version": "7.1", "path": path, "includeContent": "false"},
+                timeout=30,
+            )
+            if existing.status_code == 200:
+                etag = existing.headers.get("ETag")
+        except Exception:
+            pass
+
+        headers = {**self._headers(), "Content-Type": "application/json"}
+        if etag:
+            headers["If-Match"] = etag
+
+        r = requests.put(
+            f"{self.base_url}/_apis/wiki/wikis/{wiki_id}/pages",
+            headers=headers,
+            params={"api-version": "7.1", "path": path},
+            json={"content": content},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def delete_wiki_page(self, wiki_id: str, path: str) -> None:
+        """Delete a wiki page (and all its sub-pages)."""
+        r = requests.delete(
+            f"{self.base_url}/_apis/wiki/wikis/{wiki_id}/pages",
+            headers=self._headers(),
+            params={"api-version": "7.1", "path": path},
+            timeout=30,
+        )
+        r.raise_for_status()
 
     # -------------------------------------------------------------------------
     # Projects

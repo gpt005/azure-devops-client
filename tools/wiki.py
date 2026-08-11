@@ -45,9 +45,10 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 commands:
-  list          List all wikis in the project
-  pages         Browse the page tree (--wiki, --path, --depth)
-  read <path>   Print a page's markdown content (--wiki)
+  list               List all wikis in the project
+  pages              Browse the page tree (--wiki, --path, --depth)
+  read <path>        Print a page's markdown content (--wiki)
+  write <path> <file>  Create or update a wiki page from a markdown file
 """,
     )
     parser.add_argument("--org", default=os.environ.get("AZDO_ORG"))
@@ -67,6 +68,17 @@ commands:
     p_read = sub.add_parser("read", help="Read a wiki page")
     p_read.add_argument("path", help="Page path, e.g. /Contracts/01-Auth")
     p_read.add_argument("--wiki", dest="wiki_id", help="Wiki identifier (default: first wiki)")
+
+    # write
+    p_write = sub.add_parser("write", help="Create or update a wiki page from a markdown file")
+    p_write.add_argument("path", help="Page path, e.g. /Standards & Process/Boards Governance")
+    p_write.add_argument("file", help="Path to the local markdown file to upload")
+    p_write.add_argument("--wiki", dest="wiki_id", help="Wiki identifier (default: first wiki)")
+
+    # delete
+    p_delete = sub.add_parser("delete", help="Delete a wiki page and all its sub-pages")
+    p_delete.add_argument("path", help="Page path to delete")
+    p_delete.add_argument("--wiki", dest="wiki_id", help="Wiki identifier (default: first wiki)")
 
     args = parser.parse_args()
 
@@ -103,6 +115,29 @@ commands:
                 page = ado.get_wiki_page(wiki_id, resolved)
                 print(f"# {page.get('path', resolved)}\n")
                 print(page.get("content", "(no content)"))
+
+        case "write":
+            wiki_id = getattr(args, "wiki_id", None) or default_wiki
+            if not wiki_id:
+                print("No wikis found.")
+            else:
+                with open(args.file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                resolved = _resolve_path(args.path)
+                result = ado.upsert_wiki_page(wiki_id, resolved, content)
+                url = result.get("remoteUrl") or result.get("url", "")
+                print(f"Page written: {resolved}")
+                if url:
+                    print(f"URL: {url}")
+
+        case "delete":
+            wiki_id = getattr(args, "wiki_id", None) or default_wiki
+            if not wiki_id:
+                print("No wikis found.")
+            else:
+                resolved = _resolve_path(args.path)
+                ado.delete_wiki_page(wiki_id, resolved)
+                print(f"Deleted: {resolved}")
 
         case _:
             parser.print_help()

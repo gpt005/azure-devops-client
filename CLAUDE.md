@@ -37,6 +37,25 @@ To target a different project ad-hoc, pass `--project "AgentGovernance"` on the 
 python ado_client.py --help
 ```
 
+## Boards governance
+
+Before **creating, updating, or deleting** any work item, read the Boards Governance wiki page:
+
+```bash
+python tools/wiki.py read "/Standards & Process/Boards Governance"
+```
+
+Use it to determine the correct work item type, mandatory fields, title format, description template, tags, area path, and iteration path. Do not create items that violate these conventions.
+
+## Wiki link format
+
+ADO wiki does not resolve relative `./page` paths from index pages. When writing wiki pages that link to other pages, use absolute paths from the root with hyphens for spaces and `%26` for `&`:
+
+```text
+/Standards-%26-Process/Boards-Governance
+/Standards-%26-Process/Git-%26-Branching
+```
+
 ## Key conventions
 
 - All writes use JSON Patch (`application/json-patch+json`)
