@@ -240,6 +240,18 @@ class AzureDevOpsClient:
     def set_iteration(self, work_item_id: int, iteration_path: str) -> dict[str, Any]:
         return self.set_field(work_item_id, "System.IterationPath", iteration_path)
 
+    def add_link(self, work_item_id: int, target_id: int, rel: str) -> dict[str, Any]:
+        """Add a relation link between two work items."""
+        target_url = f"{self.base_url}/_apis/wit/workitems/{target_id}"
+        return self.update_work_item(
+            work_item_id,
+            [{"op": "add", "path": "/relations/-", "value": {"rel": rel, "url": target_url}}],
+        )
+
+    def set_parent(self, work_item_id: int, parent_id: int) -> dict[str, Any]:
+        """Set the parent of a work item (child → parent hierarchy link)."""
+        return self.add_link(work_item_id, parent_id, "System.LinkTypes.Hierarchy-Reverse")
+
     # -------------------------------------------------------------------------
     # Work Items — Delete
     # -------------------------------------------------------------------------

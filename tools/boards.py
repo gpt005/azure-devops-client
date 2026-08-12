@@ -66,6 +66,7 @@ commands:
   state         Change a work item's state
   assign        Assign a work item to someone
   tags          Set tags on a work item
+  parent        Set the parent of a work item
   delete        Delete a work item (soft by default)
   restore       Restore a soft-deleted work item
   comments      List all comments on a work item
@@ -113,6 +114,7 @@ commands:
     p_create.add_argument("--tag", dest="tags", action="append")
     p_create.add_argument("--area", dest="area_path")
     p_create.add_argument("--iteration", dest="iteration_path")
+    p_create.add_argument("--parent", dest="parent_id", type=int, metavar="ID", help="Work item ID to set as parent")
 
     # title
     p_title = sub.add_parser("title", help="Update a work item's title")
@@ -138,6 +140,11 @@ commands:
     p_tags = sub.add_parser("tags", help="Set tags on a work item (replaces existing)")
     p_tags.add_argument("id", type=int)
     p_tags.add_argument("tags", nargs="+", help="One or more tags")
+
+    # parent
+    p_parent = sub.add_parser("parent", help="Set the parent of a work item")
+    p_parent.add_argument("id", type=int, help="Child work item ID")
+    p_parent.add_argument("parent_id", type=int, help="Parent work item ID")
 
     # delete
     p_delete = sub.add_parser("delete", help="Delete a work item")
@@ -233,7 +240,11 @@ commands:
                 area_path=getattr(args, "area_path", None),
                 iteration_path=getattr(args, "iteration_path", None),
             )
-            print(f"Created {args.type} #{item['id']}: {args.title}")
+            item_id = item["id"]
+            print(f"Created {args.type} #{item_id}: {args.title}")
+            if getattr(args, "parent_id", None):
+                ado.set_parent(item_id, args.parent_id)
+                print(f"Parent set to #{args.parent_id}.")
 
         case "title":
             ado.set_title(args.id, args.title)
@@ -254,6 +265,10 @@ commands:
         case "tags":
             ado.set_tags(args.id, args.tags)
             print(f"Work item {args.id} tags set to: {', '.join(args.tags)}")
+
+        case "parent":
+            ado.set_parent(args.id, args.parent_id)
+            print(f"Work item #{args.id} parent set to #{args.parent_id}.")
 
         case "delete":
             action = "permanently destroyed" if args.destroy else "soft-deleted (in recycle bin)"
