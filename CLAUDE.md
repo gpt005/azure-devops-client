@@ -47,6 +47,16 @@ python tools/wiki.py read "/Standards & Process/Boards Governance"
 
 Use it to determine the correct work item type, mandatory fields, title format, description template, tags, area path, and iteration path. Do not create items that violate these conventions.
 
+## Wiki governance
+
+Before **creating, updating, or deleting** any wiki page, read the Wiki Governance page:
+
+```bash
+python tools/wiki.py read "/Standards & Process/Wiki Governance"
+```
+
+Use it to determine the correct page structure, naming, header format, whether the content warrants a three-page triad (design + contracts + decisions), and the mandatory parent index rule. After creating or deleting any page, update its parent index page in the same operation.
+
 ## Wiki link format
 
 ADO wiki does not resolve relative `./page` paths from index pages. When writing wiki pages that link to other pages, use absolute paths from the root with hyphens for spaces and `%26` for `&`:
