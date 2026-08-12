@@ -147,6 +147,14 @@ class AzureDevOpsClient:
     # Work Items — Create
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _to_html(text: str) -> str:
+        """Convert markdown to HTML if not already HTML; ADO renders HTML in description fields."""
+        stripped = text.strip()
+        if stripped.startswith("<"):
+            return text
+        return markdown.markdown(text, extensions=["tables", "fenced_code"])
+
     def create_work_item(
         self,
         work_item_type: str,
@@ -164,7 +172,7 @@ class AzureDevOpsClient:
             {"op": "add", "path": "/fields/System.Title", "value": title}
         ]
         if description:
-            ops.append({"op": "add", "path": "/fields/System.Description", "value": description})
+            ops.append({"op": "add", "path": "/fields/System.Description", "value": self._to_html(description)})
         if assigned_to:
             ops.append({"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to})
         if tags:
@@ -214,8 +222,8 @@ class AzureDevOpsClient:
         return self.set_field(work_item_id, "System.Title", title)
 
     def set_description(self, work_item_id: int, description: str) -> dict[str, Any]:
-        """Set (or replace) the description of a work item. Accepts plain text or HTML."""
-        return self.set_field(work_item_id, "System.Description", description)
+        """Set (or replace) the description of a work item. Accepts markdown or HTML."""
+        return self.set_field(work_item_id, "System.Description", self._to_html(description))
 
     def set_state(self, work_item_id: int, state: str) -> dict[str, Any]:
         return self.set_field(work_item_id, "System.State", state)
