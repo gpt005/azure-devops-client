@@ -39,21 +39,17 @@ python ado_client.py --help
 
 ## Boards governance
 
-Before **creating, updating, or deleting** any work item, read the Boards Governance wiki page:
+Before **creating, updating, or deleting** any work item, read the Boards Governance doc:
 
-```bash
-python tools/wiki.py read "/Standards & Process/Boards Governance"
-```
+`docs/standards/Boards-Governance.md`
 
 Use it to determine the correct work item type, mandatory fields, title format, description template, tags, area path, and iteration path. Do not create items that violate these conventions.
 
 ## Wiki governance
 
-Before **creating, updating, or deleting** any wiki page, read the Wiki Governance page:
+Before **creating, updating, or deleting** any wiki page, read the Wiki Governance doc:
 
-```bash
-python tools/wiki.py read "/Standards & Process/Wiki Governance"
-```
+`docs/standards/Wiki-Governance.md`
 
 Use it to determine the correct page structure, naming, header format, whether the content warrants a three-page triad (design + contracts + decisions), and the mandatory parent index rule. After creating or deleting any page, update its parent index page in the same operation.
 
